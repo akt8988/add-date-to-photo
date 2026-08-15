@@ -3,19 +3,25 @@ import { jpegOutputName } from "./imageKinds";
 import { stampOnCanvas } from "./drawStamp";
 import { readExifDate } from "./exifDate";
 import { ensureFontLoaded, fontById } from "./fonts";
-import { formatStampDate } from "./formatDate";
+import { formatStampDate, parseManualDate } from "./formatDate";
 import type { ProcessFailure, ProcessRequest, ProcessResult } from "./types";
 
 export async function processImage(req: ProcessRequest): Promise<ProcessResult> {
   const { file, options, id } = req;
 
-  if (options.dateSource !== "exif") {
+  let shot: Date | null = null;
+  if (options.dateSource === "exif") {
+    shot = await readExifDate(file);
+    if (!shot) {
+      return fail(id, "no-date", "撮影日時が取れませんでした");
+    }
+  } else if (options.dateSource === "manual") {
+    shot = parseManualDate(options.manualDate);
+    if (!shot) {
+      return fail(id, "no-date", "日付を入力してください");
+    }
+  } else {
     return fail(id, "error", "この日付ソースはまだ未対応です");
-  }
-
-  const shot = await readExifDate(file);
-  if (!shot) {
-    return fail(id, "no-date", "撮影日時が取れませんでした");
   }
 
   let bitmap: ImageBitmap;

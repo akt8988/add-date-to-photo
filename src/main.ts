@@ -11,7 +11,7 @@ import {
   StreamingZip,
 } from "./fs/zip";
 import { parseHex, toHex } from "./stamp/color";
-import { CLASSIC_AMBER_DATE_BACK, cloneStyle } from "./stamp/dateStampStyle";
+import { cloneStyle } from "./stamp/dateStampStyle";
 import { stampFocusRect } from "./stamp/drawStamp";
 import { FONTS } from "./stamp/fonts";
 import { dateSourceLabel } from "./stamp/formatDate";
@@ -67,12 +67,7 @@ app.innerHTML = `
   </div>
 
   <header class="workspace-bar">
-    <button type="button" id="home" class="home-btn" aria-label="トップへ戻る" title="トップへ戻る">
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M3.6 11.2 12 3.8l8.4 7.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
-        <path d="M6.2 10.4V20h4.4v-5.2h2.8V20h4.4v-9.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
-      </svg>
-    </button>
+    <button type="button" id="home" class="home-btn" aria-label="トップへ戻る" title="トップへ戻る">Add date</button>
   </header>
 
   <section class="grid">
@@ -106,21 +101,23 @@ app.innerHTML = `
     </div>
 
     <div class="panel panel-stamp">
-      <h2>印字</h2>
-      <p class="preset">${CLASSIC_AMBER_DATE_BACK.presetName}</p>
       <label class="date-source-row">
         日付の取り方
         <select id="date-source">
           <option value="exif" selected>${dateSourceLabel("exif")}</option>
           <option value="filename" disabled>${dateSourceLabel("filename")}</option>
           <option value="mtime" disabled>${dateSourceLabel("mtime")}</option>
-          <option value="manual" disabled>${dateSourceLabel("manual")}</option>
+          <option value="manual">${dateSourceLabel("manual")}</option>
         </select>
+      </label>
+      <label class="manual-date-row is-locked" id="manual-date-row">
+        日付
+        <input type="date" id="manual-date" value="${todayIso()}" disabled />
       </label>
       <label class="date-format-row">
         書式
         <select id="date-format">
-          <option value="'YY M D" selected>'26  8 15（1桁は十の位がスペース）</option>
+          <option value="'YY M D" selected>'26  8 15</option>
         </select>
       </label>
       <label>
@@ -187,12 +184,10 @@ app.innerHTML = `
     </div>
 
     <div class="panel preview-panel">
-      <h2>プレビュー</h2>
       <div class="preview-frame">
         <img id="preview" alt="プレビュー" hidden />
         <p id="preview-empty" class="muted">写真を選ぶと先頭の1枚を表示します</p>
       </div>
-      <h3 class="preview-zoom-title">日付の拡大</h3>
       <div class="preview-frame preview-zoom-frame">
         <img id="preview-zoom" alt="日付の拡大" hidden />
         <p id="preview-zoom-empty" class="muted">日付部分を拡大して表示します</p>
@@ -202,7 +197,10 @@ app.innerHTML = `
   </section>
 
   <section class="run-bar">
-    <button type="button" id="run" class="primary" disabled>実行</button>
+    <div class="run-wrap">
+      <button type="button" id="run" class="primary" disabled>実行</button>
+      <span id="run-hint" class="run-hint" hidden>出力先を選んでください</span>
+    </div>
     <div class="progress">
       <progress id="bar" value="0" max="1"></progress>
       <span id="status">待機中</span>
@@ -227,6 +225,8 @@ const el = {
   recursive: $("#recursive") as HTMLInputElement,
   count: $("#count"),
   dateSource: $("#date-source") as HTMLSelectElement,
+  manualDate: $("#manual-date") as HTMLInputElement,
+  manualDateRow: $("#manual-date-row"),
   dateFormat: $("#date-format") as HTMLSelectElement,
   position: $("#position") as HTMLSelectElement,
   font: $("#font") as HTMLSelectElement,
@@ -257,6 +257,7 @@ const el = {
   colorZoomEmpty: $("#color-zoom-empty"),
   previewMeta: $("#preview-meta"),
   run: $("#run") as HTMLButtonElement,
+  runHint: $("#run-hint"),
   bar: $("#bar") as HTMLProgressElement,
   status: $("#status"),
 };
@@ -384,7 +385,7 @@ el.pickPhotos.addEventListener("change", () => {
     applyMode();
     if (ioMode === "pc" && !outputDir) {
       el.status.textContent =
-        "次に「出力フォルダを選ぶ」を押してください。原本を守るため、入力とは別のフォルダを選びます。";
+        "オリジナル画像を守るため、オリジナル画像とは別のフォルダを選んでください。";
     } else {
       el.status.textContent = "待機中";
     }
@@ -395,6 +396,7 @@ el.pickPhotos.addEventListener("change", () => {
 
 for (const input of [
   el.dateSource,
+  el.manualDate,
   el.dateFormat,
   el.position,
   el.font,
@@ -425,9 +427,25 @@ el.run.addEventListener("click", () => {
   void runBatch();
 });
 
+function todayIso(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function syncManualDateRow(): void {
+  const manual = el.dateSource.value === "manual";
+  el.manualDate.disabled = !manual;
+  el.manualDateRow.classList.toggle("is-locked", !manual);
+}
+
 function readOptions(): void {
   options.dateSource = el.dateSource.value as DateSource;
+  options.manualDate = el.manualDate.value;
   options.dateFormat = el.dateFormat.value;
+  syncManualDateRow();
   options.position = el.position.value as StampPosition;
   options.fontId = el.font.value;
   options.scale = Number(el.scale.value);
@@ -468,7 +486,7 @@ async function pickPcInput(opts?: { promptOutput?: boolean }): Promise<void> {
     applyMode();
     if (opts?.promptOutput && !outputDir) {
       el.status.textContent =
-        "次に「出力フォルダを選ぶ」を押してください。原本を守るため、入力とは別のフォルダを選びます。";
+        "オリジナル画像を守るため、オリジナル画像とは別のフォルダを選んでください。";
     }
   } catch (err) {
     if (isAbort(err)) return;
@@ -673,15 +691,18 @@ async function showZoomPreview(
 async function updateRunEnabled(): Promise<void> {
   if (pendingZipShares.length) {
     el.run.disabled = running;
+    el.runHint.hidden = true;
     return;
   }
   if (ioMode === "phone") {
     el.run.disabled = running || jobs.length === 0;
+    el.runHint.hidden = true;
     return;
   }
   const same =
     inputDir && outputDir ? await inputDir.isSameEntry(outputDir) : false;
   el.run.disabled = running || !outputDir || jobs.length === 0 || same;
+  el.runHint.hidden = Boolean(outputDir);
   if (same) {
     el.status.textContent =
       "上書き防止のため、入力と出力は別フォルダを選んでください。";
@@ -909,5 +930,6 @@ function pickerErrorMessage(err: unknown): string {
 if (ioMode === "pc" && !hasDirectoryPicker()) {
   ioMode = "phone";
 }
+syncManualDateRow();
 applyMode();
 void purgeOpfsZips();

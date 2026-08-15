@@ -21,6 +21,14 @@ export function toDsegGlyphs(cameraText: string): string {
   return `${year} ${month} ${day}`;
 }
 
+export function parseManualDate(value: string | undefined): Date | null {
+  if (!value) return null;
+  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const dt = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
 export function parseExifDate(value: unknown): Date | null {
   if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
   if (typeof value !== "string") return null;
@@ -51,6 +59,6 @@ export function dateSourceLabel(source: DateSource): string {
     case "mtime":
       return "ファイル更新日（未対応）";
     case "manual":
-      return "手動日付（未対応）";
+      return "手動で入力";
   }
 }
