@@ -388,11 +388,10 @@ body[data-io="phone"].landing .phone-hero {
   height: 100svh;
   width: 100%;
   place-items: center;
-  /* Safari の下バーとホームインジケータ分、幾何中心より少し上に置く */
   padding:
     env(safe-area-inset-top)
     1.5rem
-    calc(10vh + env(safe-area-inset-bottom));
+    env(safe-area-inset-bottom);
 }
 
 .source-modal {
@@ -440,7 +439,10 @@ body[data-io="phone"].landing .phone-hero {
   inset: 0;
   z-index: 40;
   display: grid;
-  place-items: center;
+  justify-items: center;
+  align-items: center;
+  padding-top: 66.666vh;
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 .pick-waiting[hidden] {
