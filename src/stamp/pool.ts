@@ -9,9 +9,16 @@ export class StampWorkerPool {
   private idle: Worker[] = [];
   private queue: Array<{ req: ProcessRequest; pending: Pending }> = [];
   private inflight = new Map<Worker, Pending>();
+  private size: number;
+  private doneSinceSpawn = 0;
 
   constructor(size = 2) {
-    for (let i = 0; i < size; i++) {
+    this.size = size;
+    this.spawn();
+  }
+
+  private spawn(): void {
+    for (let i = 0; i < this.size; i++) {
       const worker = new Worker(new URL("./worker.ts", import.meta.url), {
         type: "module",
       });
@@ -41,6 +48,20 @@ export class StampWorkerPool {
       this.workers.push(worker);
       this.idle.push(worker);
     }
+  }
+
+  recycle(): void {
+    if (this.queue.length > 0 || this.inflight.size > 0) return;
+    for (const w of this.workers) w.terminate();
+    this.workers = [];
+    this.idle = [];
+    this.doneSinceSpawn = 0;
+    this.spawn();
+  }
+
+  recycleEvery(n: number): void {
+    this.doneSinceSpawn += 1;
+    if (this.doneSinceSpawn >= n) this.recycle();
   }
 
   run(req: ProcessRequest): Promise<ProcessResult> {

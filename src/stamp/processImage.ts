@@ -21,6 +21,7 @@ export async function processImage(req: ProcessRequest): Promise<ProcessResult> 
   let bitmap: ImageBitmap;
   try {
     bitmap = await fileToBitmap(file);
+    bitmap = await maybeDownscale(bitmap, req.maxEdge);
   } catch (err) {
     return fail(id, "decode", err instanceof Error ? err.message : "画像を開けませんでした");
   }
@@ -51,6 +52,26 @@ export async function processImage(req: ProcessRequest): Promise<ProcessResult> 
     bitmap.close();
     return fail(id, "error", err instanceof Error ? err.message : "印字に失敗しました");
   }
+}
+
+async function maybeDownscale(bitmap: ImageBitmap, maxEdge?: number): Promise<ImageBitmap> {
+  if (!maxEdge) return bitmap;
+  const longEdge = Math.max(bitmap.width, bitmap.height);
+  if (longEdge <= maxEdge) return bitmap;
+  const scale = maxEdge / longEdge;
+  const w = Math.max(1, Math.round(bitmap.width * scale));
+  const h = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = new OffscreenCanvas(w, h);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return bitmap;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  bitmap.close();
+  if (typeof canvas.transferToImageBitmap === "function") {
+    return canvas.transferToImageBitmap();
+  }
+  return createImageBitmap(canvas);
 }
 
 function fail(

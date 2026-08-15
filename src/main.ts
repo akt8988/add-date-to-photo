@@ -3,7 +3,13 @@ import { registerSW } from "virtual:pwa-register";
 import { defaultIoMode, ioModeFromQuery, isIosDevice, type IoMode } from "./device";
 import { hasDirectoryPicker, listImages, writeJpeg } from "./fs/folder";
 import { jobsFromFiles, type JobFile } from "./fs/jobs";
-import { downloadZip } from "./fs/zip";
+import {
+  PHONE_ZIP_MAX_FILES,
+  purgeOpfsZips,
+  releaseZipFile,
+  shareOrDownload,
+  StreamingZip,
+} from "./fs/zip";
 import { parseHex, toHex } from "./stamp/color";
 import { CLASSIC_AMBER_DATE_BACK, cloneStyle } from "./stamp/dateStampStyle";
 import { stampFocusRect } from "./stamp/drawStamp";
@@ -34,7 +40,11 @@ let previewObjectUrl: string | null = null;
 let previewZoomUrl: string | null = null;
 let running = false;
 let previewTimer = 0;
+let previewGen = 0;
+let pendingZipShares: File[] = [];
 const pool = new StampWorkerPool(isIosDevice() ? 1 : 2);
+const PREVIEW_MAX_EDGE = 1600;
+const IOS_RECYCLE_EVERY = 10;
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const style = options.stampStyle;
@@ -91,7 +101,7 @@ app.innerHTML = `
         <p class="hint">入力とは別のフォルダへ書き出します。原本はそのまま残ります。</p>
       </div>
       <div data-io="phone">
-        <p class="hint">実行すると、日付入り写真の ZIP を保存します。原本はそのまま残ります。</p>
+        <p class="hint">実行すると、日付入り写真の ZIP を保存します。原本はそのまま残ります。枚数が多いときは ZIP が分かれます。</p>
       </div>
     </div>
 
@@ -287,6 +297,9 @@ function goHome(): void {
   el.outLabel.textContent = "未選択";
   el.photoSummary.textContent = "未選択";
   setCountLabel("画像 0 枚");
+  pendingZipShares = [];
+  void purgeOpfsZips();
+  el.run.textContent = "実行";
   el.status.textContent = "待機中";
   el.pickPhotos.value = "";
   applyMode();
@@ -355,23 +368,29 @@ window.addEventListener("keydown", (event) => {
 });
 
 el.pickPhotos.addEventListener("change", () => {
-  const selected = [...(el.pickPhotos.files ?? [])];
-  if (!selected.length) return;
-  inputDir = null;
-  inputKind = "photos";
-  const forced = ioModeFromQuery();
-  ioMode = forced ?? (hasDirectoryPicker() && !isIosDevice() ? "pc" : "phone");
-  jobs = jobsFromFiles(selected);
-  onLanding = false;
-  el.photoSummary.textContent = photoSummary(selected);
-  setCountLabel(`画像 ${jobs.length} 枚`);
-  applyMode();
-  void refreshPreview();
-  if (ioMode === "pc" && !outputDir) {
-    el.status.textContent =
-      "次に「出力フォルダを選ぶ」を押してください。原本を守るため、入力とは別のフォルダを選びます。";
-  }
-  void updateRunEnabled();
+  const list = el.pickPhotos.files;
+  if (!list?.length) return;
+  el.status.textContent = `${list.length} 枚を読み込み中…`;
+  const selected = Array.from(list);
+  window.setTimeout(() => {
+    inputDir = null;
+    inputKind = "photos";
+    const forced = ioModeFromQuery();
+    ioMode = forced ?? (hasDirectoryPicker() && !isIosDevice() ? "pc" : "phone");
+    jobs = jobsFromFiles(selected);
+    onLanding = false;
+    el.photoSummary.textContent = photoSummary(selected);
+    setCountLabel(`画像 ${jobs.length} 枚`);
+    applyMode();
+    if (ioMode === "pc" && !outputDir) {
+      el.status.textContent =
+        "次に「出力フォルダを選ぶ」を押してください。原本を守るため、入力とは別のフォルダを選びます。";
+    } else {
+      el.status.textContent = "待機中";
+    }
+    void updateRunEnabled();
+    void refreshPreview();
+  }, 0);
 });
 
 for (const input of [
@@ -399,6 +418,10 @@ for (const input of [
 }
 
 el.run.addEventListener("click", () => {
+  if (pendingZipShares.length) {
+    void shareNextZip();
+    return;
+  }
   void runBatch();
 });
 
@@ -539,45 +562,55 @@ async function sampleBackdropFile(): Promise<File> {
 
 async function refreshPreview(): Promise<void> {
   if (running) return;
-  clearPreviewUrls();
+  const gen = ++previewGen;
   const stampOptions = { ...options, stampStyle: cloneStyle(options.stampStyle) };
+  const previewJob = {
+    id: 0,
+    options: stampOptions,
+    maxEdge: PREVIEW_MAX_EDGE,
+  };
+
   if (!jobs[0]) {
-    el.preview.hidden = true;
-    el.previewEmpty.hidden = false;
-    el.previewEmpty.textContent = "写真を選ぶと先頭の1枚を表示します";
     try {
       const file = await sampleBackdropFile();
       const result = await pool.run({
-        id: 0,
+        ...previewJob,
         file,
         fileName: file.name,
         lastModified: Date.now(),
-        options: stampOptions,
       });
+      if (gen !== previewGen) return;
+      el.preview.hidden = true;
+      el.previewEmpty.hidden = false;
+      el.previewEmpty.textContent = "写真を選ぶと先頭の1枚を表示します";
       if (result.ok) {
-        await showZoomPreview(result.blob, stampOptions);
+        await showZoomPreview(result.blob, stampOptions, gen);
       } else {
         hideZoomPreview("日付の拡大を作れませんでした");
       }
     } catch {
+      if (gen !== previewGen) return;
       hideZoomPreview("日付の拡大を作れませんでした");
     }
     return;
   }
+
   const file = await jobs[0].getFile();
+  if (gen !== previewGen) return;
   const result = await pool.run({
-    id: 0,
+    ...previewJob,
     file,
     fileName: file.name,
     lastModified: file.lastModified,
-    options: stampOptions,
   });
+  if (gen !== previewGen) return;
   el.previewEmpty.hidden = true;
   if (result.ok) {
+    clearPreviewUrls();
     previewObjectUrl = URL.createObjectURL(result.blob);
     el.preview.src = previewObjectUrl;
     el.preview.hidden = false;
-    await showZoomPreview(result.blob, stampOptions);
+    await showZoomPreview(result.blob, stampOptions, gen);
   } else {
     el.preview.hidden = true;
     el.previewEmpty.hidden = false;
@@ -586,8 +619,16 @@ async function refreshPreview(): Promise<void> {
   }
 }
 
-async function showZoomPreview(blob: Blob, stampOptions: StampOptions): Promise<void> {
+async function showZoomPreview(
+  blob: Blob,
+  stampOptions: StampOptions,
+  gen: number,
+): Promise<void> {
   const bitmap = await createImageBitmap(blob);
+  if (gen !== previewGen) {
+    bitmap.close();
+    return;
+  }
   const rect = stampFocusRect(bitmap.width, bitmap.height, stampOptions);
   const zoom = Math.max(2.5, Math.min(6, 720 / rect.width));
   const canvas = document.createElement("canvas");
@@ -614,17 +655,26 @@ async function showZoomPreview(blob: Blob, stampOptions: StampOptions): Promise<
   );
   bitmap.close();
   const crop = await new Promise<Blob | null>((resolve) => {
-    canvas.toBlob(resolve, "image/jpeg", 0.92);
+    canvas.toBlob(resolve, "image/jpeg", 0.85);
   });
+  if (gen !== previewGen) return;
   if (!crop) {
     hideZoomPreview("拡大プレビューを作れませんでした");
     return;
+  }
+  if (previewZoomUrl) {
+    URL.revokeObjectURL(previewZoomUrl);
+    previewZoomUrl = null;
   }
   previewZoomUrl = URL.createObjectURL(crop);
   showZoomImages(previewZoomUrl);
 }
 
 async function updateRunEnabled(): Promise<void> {
+  if (pendingZipShares.length) {
+    el.run.disabled = running;
+    return;
+  }
   if (ioMode === "phone") {
     el.run.disabled = running || jobs.length === 0;
     return;
@@ -657,8 +707,13 @@ async function runBatch(): Promise<void> {
   let ok = 0;
   const skipped: string[] = [];
   const failed: string[] = [];
-  const zipParts: Array<{ name: string; blob: Blob }> = [];
-  const limit = ioMode === "phone" || isIosDevice() ? 1 : 2;
+  const phone = ioMode === "phone";
+  const zipTotal = phone ? Math.ceil(jobs.length / PHONE_ZIP_MAX_FILES) : 0;
+  let zip = phone ? new StreamingZip(phoneZipName(1, zipTotal)) : null;
+  const readyZips: File[] = [];
+  const usedNames = new Map<string, number>();
+  const limit = phone || isIosDevice() ? 1 : 2;
+  let batchError: unknown;
 
   try {
     await mapPool(jobs, limit, async (item, index) => {
@@ -670,12 +725,18 @@ async function runBatch(): Promise<void> {
         lastModified: file.lastModified,
         options: { ...options, stampStyle: cloneStyle(options.stampStyle) },
       });
+      if (isIosDevice()) pool.recycleEvery(IOS_RECYCLE_EVERY);
       if (result.ok) {
-        const name = uniqueName(result.outputName, item.relativePath, index);
+        const name = uniqueName(result.outputName, item.relativePath, index, usedNames);
         if (ioMode === "pc") {
           await writeJpeg(outputDir!, name, result.blob);
-        } else {
-          zipParts.push({ name, blob: result.blob });
+        } else if (zip) {
+          await zip.add(name, result.blob);
+          if (zip.count >= PHONE_ZIP_MAX_FILES && index < jobs.length - 1) {
+            el.status.textContent = `ZIP ${readyZips.length + 1} を閉じています…`;
+            readyZips.push(await zip.closeToFile());
+            zip = new StreamingZip(phoneZipName(readyZips.length + 1, zipTotal));
+          }
         }
         ok += 1;
       } else if (result.reason === "no-date") {
@@ -686,35 +747,130 @@ async function runBatch(): Promise<void> {
       done += 1;
       el.bar.value = done;
       el.status.textContent = `${done} / ${jobs.length}（成功 ${ok}）`;
+      await yieldUi();
     });
 
-    if (ioMode === "phone" && zipParts.length) {
+    if (zip && zip.count > 0) {
       el.status.textContent = "ZIP を作成しています…";
-      const stamp = new Date();
-      const zipName = `dated-photos-${stamp.getFullYear()}${String(stamp.getMonth() + 1).padStart(2, "0")}${String(stamp.getDate()).padStart(2, "0")}.zip`;
-      await downloadZip(zipParts, zipName);
+      readyZips.push(await zip.closeToFile());
+      zip = null;
     }
+
+    el.pickPhotos.value = "";
+
+    if (readyZips.length) {
+      const first = readyZips.shift()!;
+      el.status.textContent =
+        readyZips.length > 0
+          ? `ZIP 1 / ${readyZips.length + 1} を保存…`
+          : "ZIP を保存…";
+      const outcome = await shareOrDownload(first);
+      if (outcome !== "cancelled") {
+        pendingZipShares = readyZips;
+        forgetSavedZip(first, outcome);
+      } else {
+        pendingZipShares = [first, ...readyZips];
+      }
+      el.run.textContent = pendingZipShares.length
+        ? `次の ZIP を保存（残り ${pendingZipShares.length}）`
+        : "実行";
+    }
+  } catch (err) {
+    batchError = err;
+    if (zip) await zip.discard();
+    el.status.textContent =
+      err instanceof Error ? err.message : `処理に失敗しました: ${String(err)}`;
   } finally {
     running = false;
     await updateRunEnabled();
   }
 
+  if (batchError) return;
+
   const summary = `完了: 成功 ${ok} / 日付なし ${skipped.length} / 失敗 ${failed.length}`;
-  el.status.textContent =
-    ioMode === "phone" && ok > 0
-      ? `${summary}。共有シートから「ファイル」に保存できます。`
-      : summary;
+  if (pendingZipShares.length) {
+    el.status.textContent = `${summary}。続きの ZIP を保存してください。`;
+  } else {
+    el.status.textContent =
+      ioMode === "phone" && ok > 0
+        ? `${summary}。共有シートから「ファイル」に保存できます。`
+        : summary;
+  }
 }
 
-function uniqueName(outputName: string, relativePath: string, index: number): string {
+async function shareNextZip(): Promise<void> {
+  const file = pendingZipShares[0];
+  if (!file || running) return;
+  running = true;
+  el.run.disabled = true;
+  el.status.textContent = `${file.name} を保存…`;
+  try {
+    const outcome = await shareOrDownload(file);
+    if (outcome !== "cancelled") {
+      pendingZipShares.shift();
+      forgetSavedZip(file, outcome);
+    }
+  } finally {
+    running = false;
+    if (pendingZipShares.length) {
+      el.run.textContent = `次の ZIP を保存（残り ${pendingZipShares.length}）`;
+      el.status.textContent = `残り ${pendingZipShares.length} 個の ZIP があります。`;
+    } else {
+      el.run.textContent = "実行";
+      el.status.textContent = "ZIP の保存が終わりました。共有シートから「ファイル」に保存できます。";
+    }
+    await updateRunEnabled();
+  }
+}
+
+function forgetSavedZip(file: File, outcome: "shared" | "saved"): void {
+  const delayMs = outcome === "saved" ? 30_000 : 0;
+  void (async () => {
+    await releaseZipFile(file, delayMs);
+    if (pendingZipShares.length === 0) {
+      await purgeOpfsZips();
+    }
+  })();
+}
+
+function phoneZipName(part: number, total: number): string {
+  const stamp = new Date();
+  const day = `${stamp.getFullYear()}${String(stamp.getMonth() + 1).padStart(2, "0")}${String(stamp.getDate()).padStart(2, "0")}`;
+  if (total <= 1) return `dated-photos-${day}.zip`;
+  return `dated-photos-${day}-part${part}.zip`;
+}
+
+function yieldUi(): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
+}
+
+function uniqueName(
+  outputName: string,
+  relativePath: string,
+  index: number,
+  used: Map<string, number>,
+): string {
+  let name: string;
   if (ioMode === "phone") {
     const padded = String(index + 1).padStart(4, "0");
-    return `${padded}-${outputName}`;
+    name = `${padded}-${outputName}`;
+  } else if (relativePath.includes("/")) {
+    const safe = relativePath.replaceAll("/", "__").replace(/\.[^.]+$/, "");
+    name = `${safe}.jpg`;
+  } else {
+    name = outputName;
   }
-  const nested = relativePath.includes("/");
-  if (!nested) return outputName;
-  const safe = relativePath.replaceAll("/", "__").replace(/\.[^.]+$/, "");
-  return `${safe}.jpg`;
+  const stem = name.replace(/\.jpg$/i, "");
+  let candidate = name;
+  let n = 0;
+  while (used.has(candidate)) {
+    n += 1;
+    candidate = `${stem}-${n}.jpg`;
+  }
+  used.set(candidate, 1);
+  return candidate;
 }
 
 async function mapPool<T>(
@@ -754,3 +910,4 @@ if (ioMode === "pc" && !hasDirectoryPicker()) {
   ioMode = "phone";
 }
 applyMode();
+void purgeOpfsZips();

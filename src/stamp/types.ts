@@ -43,6 +43,8 @@ export type ProcessRequest = {
   fileName: string;
   lastModified: number;
   options: StampOptions;
+  /** Preview-only: downscale the long edge before stamping. */
+  maxEdge?: number;
 };
 
 export type ProcessSuccess = {
