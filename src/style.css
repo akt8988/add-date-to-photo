@@ -435,6 +435,68 @@ body[data-io="phone"].landing .phone-hero {
   text-align: center;
 }
 
+.pick-waiting {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+}
+
+.pick-waiting[hidden] {
+  display: none !important;
+}
+
+.pick-waiting-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  background: rgb(0 0 0 / 58%);
+  cursor: pointer;
+}
+
+.pick-waiting-card {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  gap: 0.55rem;
+  max-width: min(24rem, calc(100vw - 3rem));
+  padding: 1.5rem 1.4rem 1.3rem;
+  background: #fff;
+  border: 0.5px solid #000;
+  text-align: center;
+}
+
+.pick-waiting-spinner {
+  width: 1.9rem;
+  height: 1.9rem;
+  border: 3px solid rgb(0 0 0 / 15%);
+  border-top-color: #000;
+  border-radius: 50%;
+  animation: pick-waiting-spin 0.9s linear infinite;
+}
+
+@keyframes pick-waiting-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.pick-waiting-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.pick-waiting-note {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: #444;
+}
+
 .source-close {
   position: absolute;
   top: 0.25rem;

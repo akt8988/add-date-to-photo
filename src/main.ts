@@ -66,6 +66,15 @@ app.innerHTML = `
     </div>
   </div>
 
+  <div id="pick-waiting" class="pick-waiting" hidden>
+    <button type="button" id="pick-waiting-back" class="pick-waiting-backdrop" aria-label="閉じる"></button>
+    <div class="pick-waiting-card" role="status" aria-live="polite">
+      <span class="pick-waiting-spinner" aria-hidden="true"></span>
+      <p class="pick-waiting-title">写真を受け取っています…</p>
+      <p class="pick-waiting-note">iCloud 上の写真はダウンロードに時間がかかることがあります。枚数が多いときは、そのままお待ちください。</p>
+    </div>
+  </div>
+
   <header class="workspace-bar">
     <button type="button" id="home" class="home-btn" aria-label="トップへ戻る" title="トップへ戻る">Add date</button>
   </header>
@@ -217,6 +226,8 @@ const el = {
   pickPhotos: $("#pick-photos") as HTMLInputElement,
   hero: $("#hero"),
   addDate: $("#add-date"),
+  pickWaiting: $("#pick-waiting"),
+  pickWaitingBack: $("#pick-waiting-back"),
   chooser: $("#source-chooser"),
   chooseFolder: $("#choose-folder"),
   choosePhotos: $("#choose-photos"),
@@ -272,6 +283,14 @@ function showLandingStart(): void {
   el.chooser.hidden = true;
 }
 
+function showPickWaiting(): void {
+  el.pickWaiting.hidden = false;
+}
+
+function hidePickWaiting(): void {
+  el.pickWaiting.hidden = true;
+}
+
 function showLandingChoose(): void {
   el.chooser.hidden = false;
 }
@@ -294,6 +313,7 @@ function goHome(): void {
   jobs = [];
   inputDir = null;
   outputDir = null;
+  hidePickWaiting();
   el.inLabel.textContent = "未選択";
   el.outLabel.textContent = "未選択";
   el.photoSummary.textContent = "未選択";
@@ -321,6 +341,7 @@ el.recursive.addEventListener("change", () => {
 
 el.addDate.addEventListener("click", () => {
   if (ioMode === "phone") {
+    showPickWaiting();
     el.pickPhotos.click();
     return;
   }
@@ -342,7 +363,11 @@ el.chooseFolder.addEventListener("click", () => {
   void pickPcInput({ promptOutput: true });
 });
 el.choosePhotos.addEventListener("click", () => {
+  showPickWaiting();
   el.pickPhotos.click();
+});
+el.pickWaitingBack.addEventListener("click", () => {
+  hidePickWaiting();
 });
 function showColorChooser(): void {
   el.colorChooser.hidden = false;
@@ -369,11 +394,13 @@ window.addEventListener("keydown", (event) => {
 });
 
 el.pickPhotos.addEventListener("change", () => {
+  hidePickWaiting();
   const list = el.pickPhotos.files;
   if (!list?.length) return;
   el.status.textContent = `${list.length} 枚を読み込み中…`;
   const selected = Array.from(list);
   window.setTimeout(() => {
+    showLandingStart();
     inputDir = null;
     inputKind = "photos";
     const forced = ioModeFromQuery();
@@ -392,6 +419,9 @@ el.pickPhotos.addEventListener("change", () => {
     void updateRunEnabled();
     void refreshPreview();
   }, 0);
+});
+el.pickPhotos.addEventListener("cancel", () => {
+  hidePickWaiting();
 });
 
 for (const input of [
