@@ -1,4 +1,4 @@
-import { applyBrightness, parseHex, rgba } from "./color";
+import { applyBrightness, parseHex, punchSaturation, rgba } from "./color";
 import { fontById } from "./fonts";
 import { toDsegGlyphs } from "./formatDate";
 import type { DateStampStyle, StampOptions, StampPosition } from "./types";
@@ -52,7 +52,7 @@ export function resolveStampColor(
   if (style.autoContrast) {
     hex = backdropLuma > 0.55 ? style.autoDark : backdropLuma < 0.28 ? style.autoLight : hex;
   }
-  return hex;
+  return punchSaturation(hex, glowStage(backdropLuma).sat);
 }
 
 function drawApostrophe(
@@ -181,6 +181,48 @@ function glyphBox(
   };
 }
 
+/** 0 = darkest … 4 = palest. Glow stays full; extra orange ink ramps up. */
+function glowStageIndex(luma: number): 0 | 1 | 2 | 3 | 4 {
+  if (luma < 0.22) return 0;
+  if (luma < 0.4) return 1;
+  if (luma < 0.56) return 2;
+  if (luma < 0.72) return 3;
+  return 4;
+}
+
+function glowStage(luma: number): { ink: number; sat: number } {
+  const table = [
+    { ink: 0, sat: 0 },
+    { ink: 0.1, sat: 0.15 },
+    { ink: 0.2, sat: 0.35 },
+    { ink: 0.4, sat: 0.65 },
+    { ink: 0.5, sat: 1 },
+  ] as const;
+  return table[glowStageIndex(luma)];
+}
+
+function drawStampPasses(
+  ctx: Ctx2d,
+  luma: number,
+  paint: () => void,
+): void {
+  const { ink } = glowStage(luma);
+  ctx.save();
+  ctx.filter = "none";
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 0;
+  ctx.globalCompositeOperation = "screen";
+  ctx.globalAlpha = 1;
+  paint();
+  if (ink > 0) {
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = ink;
+    paint();
+  }
+  ctx.restore();
+}
+
 function paintStamp(
   ctx: Ctx2d,
   color: string,
@@ -193,20 +235,17 @@ function paintStamp(
   text: string,
   body: string,
   useDseg: boolean,
+  backdropLuma: number,
 ): void {
   const fill = rgba(color, style.opacity);
   const radius = blurRadius(style, fontSize);
-  ctx.save();
-  ctx.globalCompositeOperation = "screen";
-  ctx.fillStyle = fill;
-  ctx.filter = "none";
-  ctx.shadowBlur = 0;
-  ctx.shadowOffsetX = 0;
-  ctx.shadowOffsetY = 0;
+  const drawDirect = () => {
+    ctx.fillStyle = fill;
+    drawGlyphs(ctx, text, body, x, y, fontSize, align, baseline, useDseg);
+  };
 
   if (radius < 0.35) {
-    drawGlyphs(ctx, text, body, x, y, fontSize, align, baseline, useDseg);
-    ctx.restore();
+    drawStampPasses(ctx, backdropLuma, drawDirect);
     return;
   }
 
@@ -220,8 +259,7 @@ function paintStamp(
   const layer = new OffscreenCanvas(lw, lh);
   const lctx = layer.getContext("2d", { willReadFrequently: true });
   if (!lctx) {
-    drawGlyphs(ctx, text, body, x, y, fontSize, align, baseline, useDseg);
-    ctx.restore();
+    drawStampPasses(ctx, backdropLuma, drawDirect);
     return;
   }
   lctx.setTransform(1, 0, 0, 1, -lx, -ly);
@@ -238,8 +276,10 @@ function paintStamp(
   } catch {
     // keep the unblurred layer if pixels cannot be read
   }
-  ctx.drawImage(layer, lx, ly);
-  ctx.restore();
+
+  drawStampPasses(ctx, backdropLuma, () => {
+    ctx.drawImage(layer, lx, ly);
+  });
 }
 
 export function stampFocusRect(
@@ -321,5 +361,6 @@ export function stampOnCanvas(
     text,
     body,
     useDseg,
+    luma,
   );
 }

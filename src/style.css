@@ -351,6 +351,20 @@ body.landing .phone-hero {
   padding: 1.5rem;
 }
 
+body[data-io="phone"].landing .phone-hero {
+  position: fixed;
+  inset: 0;
+  min-height: 0;
+  height: 100svh;
+  width: 100%;
+  place-items: center;
+  /* Safari の下バーとホームインジケータ分、幾何中心より少し上に置く */
+  padding:
+    env(safe-area-inset-top)
+    1.5rem
+    calc(10vh + env(safe-area-inset-bottom));
+}
+
 .source-modal {
   position: fixed;
   inset: 0;
