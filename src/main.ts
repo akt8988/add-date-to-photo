@@ -1,7 +1,7 @@
 import "./style.css";
 import { registerSW } from "virtual:pwa-register";
 import { defaultIoMode, ioModeFromQuery, isIosDevice, type IoMode } from "./device";
-import { hasDirectoryPicker, listImages, writeJpeg } from "./fs/folder";
+import { ensureSubdir, hasDirectoryPicker, listImages, writeJpeg } from "./fs/folder";
 import { jobsFromFiles, type JobFile } from "./fs/jobs";
 import {
   PHONE_ZIP_MAX_FILES,
@@ -28,6 +28,8 @@ if (import.meta.env.PROD) {
 }
 
 type InputKind = "folder" | "photos";
+
+const NO_DATE_FOLDER = "日付情報なし";
 
 const options: StampOptions = defaultOptions();
 let ioMode: IoMode = defaultIoMode(hasDirectoryPicker());
@@ -102,10 +104,10 @@ app.innerHTML = `
           <button type="button" id="pick-out">出力フォルダを選ぶ</button>
           <span id="out-label" class="muted">未選択</span>
         </div>
-        <p class="hint">入力とは別のフォルダへ書き出します。原本はそのまま残ります。</p>
+        <p class="hint">入力とは別のフォルダへ書き出します。原本はそのまま残ります。日付が取れない写真は「日付情報なし」フォルダへコピーします。</p>
       </div>
       <div data-io="phone">
-        <p class="hint">実行すると、日付入り写真の ZIP を保存します。原本はそのまま残ります。枚数が多いときは ZIP が分かれます。</p>
+        <p class="hint">実行すると、日付入り写真の ZIP を保存します。原本はそのまま残ります。日付が取れない写真は ZIP 内の「日付情報なし」フォルダへ入れます。枚数が多いときは ZIP が分かれます。</p>
       </div>
     </div>
 
@@ -763,6 +765,8 @@ async function runBatch(): Promise<void> {
   let zip = phone ? new StreamingZip(phoneZipName(1, zipTotal)) : null;
   const readyZips: File[] = [];
   const usedNames = new Map<string, number>();
+  const usedNoDateNames = new Map<string, number>();
+  let noDateDir: FileSystemDirectoryHandle | null = null;
   const limit = phone || isIosDevice() ? 1 : 2;
   let batchError: unknown;
 
@@ -791,6 +795,18 @@ async function runBatch(): Promise<void> {
         }
         ok += 1;
       } else if (result.reason === "no-date") {
+        const name = uniqueName(file.name, item.relativePath, index, usedNoDateNames);
+        if (ioMode === "pc") {
+          noDateDir ??= await ensureSubdir(outputDir!, NO_DATE_FOLDER);
+          await writeJpeg(noDateDir, name, file);
+        } else if (zip) {
+          await zip.add(`${NO_DATE_FOLDER}/${name}`, file);
+          if (zip.count >= PHONE_ZIP_MAX_FILES && index < jobs.length - 1) {
+            el.status.textContent = `ZIP ${readyZips.length + 1} を閉じています…`;
+            readyZips.push(await zip.closeToFile());
+            zip = new StreamingZip(phoneZipName(readyZips.length + 1, zipTotal));
+          }
+        }
         skipped.push(`${item.name}: ${result.message}`);
       } else {
         failed.push(`${item.name}: ${result.message}`);
@@ -913,12 +929,13 @@ function uniqueName(
   } else {
     name = outputName;
   }
-  const stem = name.replace(/\.jpg$/i, "");
+  const stem = name.replace(/\.[^.]+$/, "");
+  const ext = name.slice(stem.length) || ".jpg";
   let candidate = name;
   let n = 0;
   while (used.has(candidate)) {
     n += 1;
-    candidate = `${stem}-${n}.jpg`;
+    candidate = `${stem}-${n}${ext}`;
   }
   used.set(candidate, 1);
   return candidate;

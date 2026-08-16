@@ -181,8 +181,13 @@ function uniqueZipName(name: string, used: Map<string, number>): string {
   const n = used.get(name) ?? 0;
   used.set(name, n + 1);
   if (n === 0) return name;
-  const stem = name.replace(/\.jpg$/i, "");
-  return `${stem}-${n}.jpg`;
+  const slash = name.lastIndexOf("/");
+  const dir = slash >= 0 ? name.slice(0, slash + 1) : "";
+  const base = slash >= 0 ? name.slice(slash + 1) : name;
+  const dot = base.lastIndexOf(".");
+  const stem = dot > 0 ? base.slice(0, dot) : base;
+  const ext = dot > 0 ? base.slice(dot) : "";
+  return `${dir}${stem}-${n}${ext}`;
 }
 
 function localFileHeader(nameBytes: Uint8Array, crc: number, size: number): Uint8Array {

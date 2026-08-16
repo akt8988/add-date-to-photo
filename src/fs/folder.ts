@@ -1,4 +1,4 @@
-import { isSupportedImage } from "../stamp/imageKinds";
+import { isIgnoredFileName, isSupportedImage } from "../stamp/imageKinds";
 
 export type ListedFile = {
   handle: FileSystemFileHandle;
@@ -27,6 +27,7 @@ async function walk(
   out: ListedFile[],
 ): Promise<void> {
   for await (const [name, handle] of dir.entries()) {
+    if (isIgnoredFileName(name)) continue;
     if (handle.kind === "file") {
       const file = await handle.getFile();
       if (isSupportedImage(file)) {
@@ -45,6 +46,13 @@ async function walk(
       );
     }
   }
+}
+
+export async function ensureSubdir(
+  dir: FileSystemDirectoryHandle,
+  name: string,
+): Promise<FileSystemDirectoryHandle> {
+  return dir.getDirectoryHandle(name, { create: true });
 }
 
 export async function writeJpeg(

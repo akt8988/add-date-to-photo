@@ -6,6 +6,7 @@ export function isHeicFile(file: File): boolean {
 }
 
 export function isSupportedImage(file: File): boolean {
+  if (isIgnoredFileName(file.name)) return false;
   if (isHeicFile(file)) return true;
   return (
     /\.(jpe?g|png|webp)$/i.test(file.name) ||
@@ -13,6 +14,11 @@ export function isSupportedImage(file: File): boolean {
     file.type === "image/png" ||
     file.type === "image/webp"
   );
+}
+
+/** Finder hides these; they are not photos (AppleDouble on USB/exFAT, etc.). */
+export function isIgnoredFileName(name: string): boolean {
+  return name.startsWith("._") || name.startsWith(".") || name === "__MACOSX";
 }
 
 export function jpegOutputName(originalName: string): string {
