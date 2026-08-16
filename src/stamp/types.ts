@@ -6,6 +6,11 @@ export type StampPosition =
   | "top-right"
   | "top-left";
 
+export type GlowStage = {
+  screen: number;
+  ink: number;
+};
+
 export type DateStampStyle = {
   presetName: string;
   color: string;
@@ -17,6 +22,7 @@ export type DateStampStyle = {
   colorMax: string;
   autoDark: string;
   autoLight: string;
+  glowStages: GlowStage[];
 };
 
 export type StampOptions = {

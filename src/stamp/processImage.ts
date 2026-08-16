@@ -1,5 +1,6 @@
 import { fileToBitmap } from "./decodeImage";
 import { jpegOutputName } from "./imageKinds";
+import { jpegWithShotDate } from "./jpegExif";
 import { stampOnCanvas } from "./drawStamp";
 import { readExifDate } from "./exifDate";
 import { ensureFontLoaded, fontById } from "./fonts";
@@ -43,10 +44,11 @@ export async function processImage(req: ProcessRequest): Promise<ProcessResult> 
     const dateText = formatStampDate(shot);
     stampOnCanvas(canvas, ctx, bitmap, dateText, options);
     bitmap.close();
-    const blob = await canvas.convertToBlob({
+    const stamped = await canvas.convertToBlob({
       type: "image/jpeg",
       quality: options.jpegQuality,
     });
+    const blob = await jpegWithShotDate(stamped, shot);
     return {
       id,
       ok: true,

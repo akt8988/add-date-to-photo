@@ -11,7 +11,7 @@ import {
   StreamingZip,
 } from "./fs/zip";
 import { parseHex, toHex } from "./stamp/color";
-import { cloneStyle } from "./stamp/dateStampStyle";
+import { cloneStyle, DEFAULT_GLOW_STAGES, GLOW_STAGE_LABELS } from "./stamp/dateStampStyle";
 import { stampFocusRect } from "./stamp/drawStamp";
 import { FONTS } from "./stamp/fonts";
 import { dateSourceLabel } from "./stamp/formatDate";
@@ -104,7 +104,7 @@ app.innerHTML = `
           <button type="button" id="pick-out">出力フォルダを選ぶ</button>
           <span id="out-label" class="muted">未選択</span>
         </div>
-        <p class="hint">入力とは別のフォルダへ書き出します。原本はそのまま残ります。日付が取れない写真は「日付情報なし」フォルダへコピーします。</p>
+        <p class="hint">オリジナル画像を守るため、オリジナル画像とは別のフォルダを選んでください。</p>
       </div>
       <div data-io="phone">
         <p class="hint">実行すると、日付入り写真の ZIP を保存します。原本はそのまま残ります。日付が取れない写真は ZIP 内の「日付情報なし」フォルダへ入れます。枚数が多いときは ZIP が分かれます。</p>
@@ -149,6 +149,35 @@ app.innerHTML = `
           色
           <span class="color-swatch" id="color-swatch" style="background:${style.color}"></span>
         </button>
+      </div>
+      <div class="glow-row">
+        <span class="glow-row-label">文字発光</span>
+        <button type="button" id="glow-open" class="glow-tune-btn">調整</button>
+      </div>
+      <div id="glow-chooser" class="source-modal color-modal" hidden>
+        <button type="button" id="glow-back" class="source-modal-backdrop" aria-label="Close"></button>
+        <div class="source-modal-card glow-modal-card" role="dialog" aria-modal="true" aria-labelledby="glow-title">
+          <button type="button" id="glow-close" class="source-close" aria-label="Close">×</button>
+          <p id="glow-title" class="color-modal-title">文字発光を調整</p>
+          <p class="glow-modal-note">日付まわりの明るさごとに、発光とオレンジ追加の割合を決めます。</p>
+          ${GLOW_STAGE_LABELS.map((label, i) => {
+            const stage = style.glowStages[i] ?? DEFAULT_GLOW_STAGES[i];
+            const screenPct = Math.round(stage.screen * 100);
+            const inkPct = Math.round(stage.ink * 100);
+            return `
+          <div class="glow-stage">
+            <p class="glow-stage-title">${label}</p>
+            <label>
+              発光 <span id="glow-screen-${i}-val">${screenPct}%</span>
+              <input type="range" id="glow-screen-${i}" min="0" max="100" step="1" value="${screenPct}" />
+            </label>
+            <label>
+              オレンジ追加 <span id="glow-ink-${i}-val">${inkPct}%</span>
+              <input type="range" id="glow-ink-${i}" min="0" max="100" step="1" value="${inkPct}" />
+            </label>
+          </div>`;
+          }).join("")}
+        </div>
       </div>
       <div id="color-chooser" class="source-modal color-modal" hidden>
         <button type="button" id="color-back" class="source-modal-backdrop" aria-label="Close"></button>
@@ -251,6 +280,10 @@ const el = {
   colorChooser: $("#color-chooser"),
   colorBack: $("#color-back"),
   colorClose: $("#color-close"),
+  glowOpen: $("#glow-open"),
+  glowChooser: $("#glow-chooser"),
+  glowBack: $("#glow-back"),
+  glowClose: $("#glow-close"),
   rVal: $("#r-val"),
   gVal: $("#g-val"),
   bVal: $("#b-val"),
@@ -389,10 +422,27 @@ el.colorBack.addEventListener("click", () => {
 el.colorClose.addEventListener("click", () => {
   hideColorChooser();
 });
+function showGlowChooser(): void {
+  el.glowChooser.hidden = false;
+}
+
+function hideGlowChooser(): void {
+  el.glowChooser.hidden = true;
+}
+
+el.glowOpen.addEventListener("click", () => {
+  showGlowChooser();
+});
+el.glowBack.addEventListener("click", () => {
+  hideGlowChooser();
+});
+el.glowClose.addEventListener("click", () => {
+  hideGlowChooser();
+});
 window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !el.colorChooser.hidden) {
-    hideColorChooser();
-  }
+  if (event.key !== "Escape") return;
+  if (!el.colorChooser.hidden) hideColorChooser();
+  if (!el.glowChooser.hidden) hideGlowChooser();
 });
 
 el.pickPhotos.addEventListener("change", () => {
@@ -440,6 +490,10 @@ for (const input of [
   el.brightness,
   el.autoContrast,
   el.scale,
+  ...[0, 1, 2, 3, 4].flatMap((i) => [
+    $(`#glow-screen-${i}`) as HTMLInputElement,
+    $(`#glow-ink-${i}`) as HTMLInputElement,
+  ]),
 ]) {
   input.addEventListener("change", () => {
     readOptions();
@@ -494,6 +548,16 @@ function readOptions(): void {
     bloomRadiusPx: Number(el.bloom.value),
     brightness: Number(el.brightness.value),
     autoContrast: el.autoContrast.checked,
+    glowStages: [0, 1, 2, 3, 4].map((i) => {
+      const screenEl = $(`#glow-screen-${i}`) as HTMLInputElement;
+      const inkEl = $(`#glow-ink-${i}`) as HTMLInputElement;
+      $(`#glow-screen-${i}-val`).textContent = `${screenEl.value}%`;
+      $(`#glow-ink-${i}-val`).textContent = `${inkEl.value}%`;
+      return {
+        screen: Number(screenEl.value) / 100,
+        ink: Number(inkEl.value) / 100,
+      };
+    }),
   });
   el.rVal.textContent = String(rgb.r);
   el.gVal.textContent = String(rgb.g);

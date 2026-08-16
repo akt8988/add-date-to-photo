@@ -24,6 +24,15 @@ function anchor(
   }
 }
 
+function stampPadding(imageWidth: number, imageHeight: number, fontSize: number) {
+  const inset = fontSize * 0.55;
+  const landscape = imageWidth > imageHeight;
+  return {
+    padX: Math.round(inset * 4.5),
+    padY: Math.round(inset * (landscape ? 4.5 : 3)),
+  };
+}
+
 function regionLuma(ctx: Ctx2d, x: number, y: number, w: number, h: number): number {
   try {
     const rx = Math.max(0, Math.floor(x));
@@ -52,7 +61,7 @@ export function resolveStampColor(
   if (style.autoContrast) {
     hex = backdropLuma > 0.55 ? style.autoDark : backdropLuma < 0.28 ? style.autoLight : hex;
   }
-  return punchSaturation(hex, glowStage(backdropLuma).sat);
+  return punchSaturation(hex, glowStage(style, backdropLuma).sat);
 }
 
 function drawApostrophe(
@@ -190,31 +199,33 @@ function glowStageIndex(luma: number): 0 | 1 | 2 | 3 | 4 {
   return 4;
 }
 
-function glowStage(luma: number): { ink: number; sat: number } {
-  const table = [
-    { ink: 0, sat: 0 },
-    { ink: 0.1, sat: 0.15 },
-    { ink: 0.2, sat: 0.35 },
-    { ink: 0.4, sat: 0.65 },
-    { ink: 0.5, sat: 1 },
-  ] as const;
-  return table[glowStageIndex(luma)];
+function glowStage(style: DateStampStyle, luma: number): { screen: number; ink: number; sat: number } {
+  const sat = [0, 0.15, 0.35, 0.65, 1] as const;
+  const i = glowStageIndex(luma);
+  const stage = style.glowStages[i] ?? { screen: 1, ink: 0 };
+  return {
+    screen: Math.max(0, Math.min(1, stage.screen)),
+    ink: Math.max(0, Math.min(1, stage.ink)),
+    sat: sat[i],
+  };
 }
 
 function drawStampPasses(
   ctx: Ctx2d,
-  luma: number,
+  screen: number,
+  ink: number,
   paint: () => void,
 ): void {
-  const { ink } = glowStage(luma);
   ctx.save();
   ctx.filter = "none";
   ctx.shadowBlur = 0;
   ctx.shadowOffsetX = 0;
   ctx.shadowOffsetY = 0;
-  ctx.globalCompositeOperation = "screen";
-  ctx.globalAlpha = 1;
-  paint();
+  if (screen > 0) {
+    ctx.globalCompositeOperation = "screen";
+    ctx.globalAlpha = screen;
+    paint();
+  }
   if (ink > 0) {
     ctx.globalCompositeOperation = "source-over";
     ctx.globalAlpha = ink;
@@ -239,13 +250,14 @@ function paintStamp(
 ): void {
   const fill = rgba(color, style.opacity);
   const radius = blurRadius(style, fontSize);
+  const { screen, ink } = glowStage(style, backdropLuma);
   const drawDirect = () => {
     ctx.fillStyle = fill;
     drawGlyphs(ctx, text, body, x, y, fontSize, align, baseline, useDseg);
   };
 
   if (radius < 0.35) {
-    drawStampPasses(ctx, backdropLuma, drawDirect);
+    drawStampPasses(ctx, screen, ink, drawDirect);
     return;
   }
 
@@ -259,7 +271,7 @@ function paintStamp(
   const layer = new OffscreenCanvas(lw, lh);
   const lctx = layer.getContext("2d", { willReadFrequently: true });
   if (!lctx) {
-    drawStampPasses(ctx, backdropLuma, drawDirect);
+    drawStampPasses(ctx, screen, ink, drawDirect);
     return;
   }
   lctx.setTransform(1, 0, 0, 1, -lx, -ly);
@@ -277,7 +289,7 @@ function paintStamp(
     // keep the unblurred layer if pixels cannot be read
   }
 
-  drawStampPasses(ctx, backdropLuma, () => {
+  drawStampPasses(ctx, screen, ink, () => {
     ctx.drawImage(layer, lx, ly);
   });
 }
@@ -291,9 +303,7 @@ export function stampFocusRect(
   const h = imageHeight;
   const shortSide = Math.min(w, h);
   const fontSize = Math.max(12, Math.round(shortSide * options.scale));
-  const inset = fontSize * 0.55;
-  const padX = Math.round(inset * 2);
-  const padY = Math.round(inset * 3);
+  const { padX, padY } = stampPadding(w, h, fontSize);
   const { x, y, align, baseline } = anchor(options.position, w, h, padX, padY);
   const radius = blurRadius(options.stampStyle, fontSize);
   const cropW = fontSize * 8.8 + radius * 6;
@@ -325,9 +335,7 @@ export function stampOnCanvas(
 
   const shortSide = Math.min(w, h);
   const fontSize = Math.max(12, Math.round(shortSide * options.scale));
-  const inset = fontSize * 0.55;
-  const padX = Math.round(inset * 2);
-  const padY = Math.round(inset * 3);
+  const { padX, padY } = stampPadding(w, h, fontSize);
   const font = fontById(options.fontId);
   ctx.font = `400 ${fontSize}px "${font.family}"`;
   const { x, y, align, baseline } = anchor(options.position, w, h, padX, padY);
